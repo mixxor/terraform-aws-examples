@@ -5,6 +5,8 @@ provider "aws" {
   region = var.region
 }
 
+
+
 # Filter out local zones, which are not currently supported 
 # with managed node groups
 data "aws_availability_zones" "available" {
@@ -83,8 +85,8 @@ module "eks" {
       instance_types = ["t3.small"]
 
       min_size     = 1
-      max_size     = 2
-      desired_size = 1
+      max_size     = 5
+      desired_size = 3
     }
   }
 }
@@ -114,5 +116,85 @@ resource "aws_eks_addon" "ebs-csi" {
   tags = {
     "eks_addon" = "ebs-csi"
     "terraform" = "true"
+  }
+}
+
+provider "kubernetes" {
+  host                   = module.eks.cluster_endpoint
+  cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
+  token                  = data.aws_eks_cluster_auth.cluster.token
+}
+
+data "aws_eks_cluster" "cluster" {
+  name = local.cluster_name
+}
+
+data "aws_eks_cluster_auth" "cluster" {
+  name = local.cluster_name
+}
+
+resource "kubernetes_namespace" "nginx_ns" {
+  metadata {
+    name = "nginx-ns-2"
+  }
+}
+
+resource "kubernetes_deployment" "nginx_deployment" {
+  metadata {
+    name = "nginx-deployment"
+    namespace = kubernetes_namespace.nginx_ns.metadata[0].name
+  }
+
+  spec {
+    replicas = 2
+
+    selector {
+      match_labels = {
+        app = "nginx"
+      }
+    }
+
+    template {
+      metadata {
+        labels = {
+          app = "nginx"
+        }
+      }
+
+      spec {
+        container {
+          image = "nginx:latest"
+          name  = "nginx"
+        }
+      }
+    }
+  }
+}
+
+provider "helm" {
+  kubernetes {
+    host                   = module.eks.cluster_endpoint
+    cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
+    token                  = data.aws_eks_cluster_auth.cluster.token
+
+  }
+}
+
+resource "kubernetes_namespace" "argocd" {
+  metadata {
+    name = "argocd"
+  }
+}
+
+resource "helm_release" "argo_cd" {
+  name       = "argo-cd"
+  repository = "https://argoproj.github.io/argo-helm"
+  chart      = "argo-cd"
+  namespace  = "argocd" # or any namespace of your choice
+
+  # Customize your Argo CD deployment
+  set {
+    name  = "server.service.type"
+    value = "LoadBalancer"
   }
 }
